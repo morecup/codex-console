@@ -10,6 +10,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...config.settings import get_settings, update_settings
+from ...core.cpa_automation import (
+    CpaAutomationConfig,
+    cpa_automation_service,
+    load_cpa_automation_config,
+    save_cpa_automation_config,
+)
 from ...database import crud
 from ...database.session import get_db
 
@@ -441,6 +447,78 @@ async def update_email_code_settings(request: EmailCodeSettings):
     )
 
     return {"success": True, "message": "验证码等待设置已更新"}
+
+
+# ============== CPA 自动化设置 ==============
+
+@router.get("/cpa-automation")
+async def get_cpa_automation_settings():
+    """获取 CPA 自动化配置与运行状态"""
+
+    with get_db() as db:
+        config = load_cpa_automation_config(db)
+
+    return {
+        "config": config.model_dump(mode="json"),
+        "status": cpa_automation_service.get_status(),
+    }
+
+
+@router.post("/cpa-automation")
+async def update_cpa_automation_settings(request: CpaAutomationConfig):
+    """更新 CPA 自动化配置"""
+
+    with get_db() as db:
+        if request.cpa_service_id:
+            cpa_service = crud.get_cpa_service_by_id(db, request.cpa_service_id)
+            if not cpa_service:
+                raise HTTPException(status_code=404, detail="所选 CPA 服务不存在")
+            if request.enabled and not cpa_service.enabled:
+                raise HTTPException(status_code=400, detail="所选 CPA 服务已禁用，请先启用")
+        elif request.enabled:
+            raise HTTPException(status_code=400, detail="启用自动联动前必须先选择 CPA 服务")
+
+        if request.email_service_type == "tempmail" and request.email_service_id is not None:
+            raise HTTPException(status_code=400, detail="Tempmail 模式无需指定邮箱服务")
+
+        if request.email_service_id is not None:
+            email_service = crud.get_email_service_by_id(db, request.email_service_id)
+            if not email_service:
+                raise HTTPException(status_code=404, detail="所选邮箱服务不存在")
+            if not email_service.enabled:
+                raise HTTPException(status_code=400, detail="所选邮箱服务已禁用，请先启用")
+            if email_service.service_type != request.email_service_type:
+                raise HTTPException(status_code=400, detail="指定邮箱服务与补号邮箱类型不匹配")
+
+        if request.proxy_id is not None:
+            proxy = crud.get_proxy_by_id(db, request.proxy_id)
+            if not proxy:
+                raise HTTPException(status_code=404, detail="所选代理不存在")
+            if not proxy.enabled:
+                raise HTTPException(status_code=400, detail="所选代理已禁用，请先启用")
+
+        config = save_cpa_automation_config(db, request)
+
+    return {
+        "success": True,
+        "message": "CPA 联动配置已保存",
+        "config": config.model_dump(mode="json"),
+        "status": cpa_automation_service.get_status(),
+    }
+
+
+@router.post("/cpa-automation/run")
+async def run_cpa_automation_now():
+    """立即执行一次 CPA 自动化流程"""
+
+    return await cpa_automation_service.run_once(trigger="manual")
+
+
+@router.get("/cpa-automation/status")
+async def get_cpa_automation_status():
+    """获取 CPA 自动化当前运行状态"""
+
+    return cpa_automation_service.get_status()
 
 
 # ============== 代理列表 CRUD ==============

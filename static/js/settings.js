@@ -71,16 +71,30 @@ const elements = {
     // Outlook 设置
     outlookSettingsForm: document.getElementById('outlook-settings-form'),
     // Web UI 访问控制
-    webuiSettingsForm: document.getElementById('webui-settings-form')
+    webuiSettingsForm: document.getElementById('webui-settings-form'),
+    // CPA 联动
+    cpaAutomationForm: document.getElementById('cpa-automation-form'),
+    cpaAutomationRunBtn: document.getElementById('cpa-automation-run-btn'),
+    cpaAutomationRefreshBtn: document.getElementById('cpa-automation-refresh-btn'),
+    cpaAutomationEmailServiceType: document.getElementById('cpa-automation-email-service-type')
 };
 
 // 选中的服务 ID
 let selectedServiceIds = new Set();
+const cpaAutomationState = {
+    cpaServices: [],
+    emailServices: [],
+    serviceTypes: [],
+    proxies: [],
+    selectedProxyId: '',
+    legacyProxy: ''
+};
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     loadSettings();
+    loadCpaAutomationSection();
     loadEmailServices();
     loadDatabaseInfo();
     loadProxies();
@@ -247,6 +261,20 @@ function initEventListeners() {
     if (elements.webuiSettingsForm) {
         elements.webuiSettingsForm.addEventListener('submit', handleSaveWebuiSettings);
     }
+    if (elements.cpaAutomationForm) {
+        elements.cpaAutomationForm.addEventListener('submit', handleSaveCpaAutomation);
+    }
+    if (elements.cpaAutomationRunBtn) {
+        elements.cpaAutomationRunBtn.addEventListener('click', handleRunCpaAutomation);
+    }
+    if (elements.cpaAutomationRefreshBtn) {
+        elements.cpaAutomationRefreshBtn.addEventListener('click', loadCpaAutomationSettings);
+    }
+    if (elements.cpaAutomationEmailServiceType) {
+        elements.cpaAutomationEmailServiceType.addEventListener('change', () => {
+            updateCpaAutomationEmailServiceOptions();
+        });
+    }
     // Team Manager 服务管理
     if (elements.addTmServiceBtn) {
         elements.addTmServiceBtn.addEventListener('click', () => openTmServiceModal());
@@ -356,6 +384,289 @@ async function loadSettings() {
     }
 }
 
+async function loadCpaAutomationSection() {
+    await loadCpaAutomationOptions();
+    await loadCpaAutomationSettings();
+}
+
+async function loadCpaAutomationOptions() {
+    if (!elements.cpaAutomationForm) return;
+
+    try {
+        const currentServiceId = document.getElementById('cpa-automation-service-id')?.value || '';
+        const currentType = document.getElementById('cpa-automation-email-service-type')?.value || 'tempmail';
+        const currentEmailServiceId = document.getElementById('cpa-automation-email-service-id')?.value || '';
+        const currentProxyId = document.getElementById('cpa-automation-proxy')?.value || cpaAutomationState.selectedProxyId || '';
+        const [cpaServices, emailServices, serviceTypes] = await Promise.all([
+            api.get('/cpa-services'),
+            api.get('/email-services?enabled_only=true'),
+            api.get('/email-services/types')
+        ]);
+
+        cpaAutomationState.cpaServices = Array.isArray(cpaServices) ? cpaServices : [];
+        cpaAutomationState.emailServices = emailServices?.services || [];
+        cpaAutomationState.serviceTypes = serviceTypes?.types || [];
+
+        renderCpaAutomationServiceOptions(currentServiceId);
+        renderCpaAutomationTypeOptions(currentType);
+        updateCpaAutomationEmailServiceOptions(currentEmailServiceId);
+        renderCpaAutomationProxyOptions(currentProxyId, cpaAutomationState.legacyProxy);
+    } catch (error) {
+        console.error('加载 CPA 联动选项失败:', error);
+        toast.error('加载 CPA 联动选项失败');
+    }
+}
+
+async function loadCpaAutomationSettings() {
+    if (!elements.cpaAutomationForm) return;
+
+    try {
+        const data = await api.get('/settings/cpa-automation');
+        applyCpaAutomationConfig(data.config || {});
+        renderCpaAutomationStatus(data.status || {}, data.config || {});
+    } catch (error) {
+        console.error('加载 CPA 联动配置失败:', error);
+        toast.error('加载 CPA 联动配置失败');
+    }
+}
+
+function renderCpaAutomationServiceOptions(selectedValue = '') {
+    const select = document.getElementById('cpa-automation-service-id');
+    if (!select) return;
+
+    const options = [
+        '<option value="">请选择要维护的 CPA 服务</option>',
+        ...cpaAutomationState.cpaServices.map(service => {
+            const disabledText = service.enabled ? '' : '（已禁用）';
+            const selected = String(service.id) === String(selectedValue) ? 'selected' : '';
+            return `<option value="${service.id}" ${selected}>${escapeHtml(service.name)}${disabledText}</option>`;
+        })
+    ];
+    select.innerHTML = options.join('');
+}
+
+function renderCpaAutomationTypeOptions(selectedValue = 'tempmail') {
+    const select = document.getElementById('cpa-automation-email-service-type');
+    if (!select) return;
+
+    const allowedTypes = new Set(['tempmail', 'outlook', 'moe_mail', 'temp_mail', 'duck_mail', 'freemail', 'imap_mail']);
+    const options = cpaAutomationState.serviceTypes
+        .filter(type => allowedTypes.has(type.value))
+        .map(type => {
+            const selected = type.value === selectedValue ? 'selected' : '';
+            return `<option value="${type.value}" ${selected}>${escapeHtml(type.label)}</option>`;
+        });
+
+    if (options.length === 0) {
+        options.push('<option value="tempmail">Tempmail.lol</option>');
+    }
+
+    select.innerHTML = options.join('');
+}
+
+function updateCpaAutomationEmailServiceOptions(selectedValue = '') {
+    const typeSelect = document.getElementById('cpa-automation-email-service-type');
+    const serviceSelect = document.getElementById('cpa-automation-email-service-id');
+    const hint = document.getElementById('cpa-automation-email-service-hint');
+    if (!typeSelect || !serviceSelect) return;
+
+    const selectedType = typeSelect.value || 'tempmail';
+
+    if (selectedType === 'tempmail') {
+        serviceSelect.innerHTML = '<option value="">Tempmail 无需额外配置</option>';
+        serviceSelect.disabled = true;
+        if (hint) {
+            hint.textContent = 'Tempmail 模式不需要绑定具体邮箱服务';
+        }
+        return;
+    }
+
+    const filteredServices = cpaAutomationState.emailServices.filter(service => service.service_type === selectedType);
+    const options = ['<option value="">自动选择可用服务</option>'];
+    filteredServices.forEach(service => {
+        const selected = String(service.id) === String(selectedValue) ? 'selected' : '';
+        options.push(`<option value="${service.id}" ${selected}>${escapeHtml(service.name)}</option>`);
+    });
+
+    serviceSelect.innerHTML = options.join('');
+    serviceSelect.disabled = false;
+
+    if (hint) {
+        hint.textContent = filteredServices.length > 0
+            ? '留空时按现有注册逻辑自动选择该类型的可用服务'
+            : '当前类型没有启用中的邮箱服务，留空时将交给后端自动尝试';
+    }
+}
+
+function applyCpaAutomationConfig(config) {
+    cpaAutomationState.selectedProxyId = config.proxy_id ? String(config.proxy_id) : '';
+    cpaAutomationState.legacyProxy = config.proxy || '';
+    document.getElementById('cpa-automation-enabled').checked = !!config.enabled;
+    renderCpaAutomationServiceOptions(config.cpa_service_id || '');
+    document.getElementById('cpa-automation-target-count').value = config.target_count ?? 0;
+    renderCpaAutomationTypeOptions(config.email_service_type || 'tempmail');
+    updateCpaAutomationEmailServiceOptions(config.email_service_id || '');
+    document.getElementById('cpa-automation-concurrency').value = config.concurrency ?? 1;
+    document.getElementById('cpa-automation-mode').value = config.mode || 'pipeline';
+    renderCpaAutomationProxyOptions(cpaAutomationState.selectedProxyId, cpaAutomationState.legacyProxy);
+    document.getElementById('cpa-automation-interval-min').value = config.interval_min ?? 5;
+    document.getElementById('cpa-automation-interval-max').value = config.interval_max ?? 30;
+    document.getElementById('cpa-automation-replenish-enabled').checked = config.replenish_enabled !== false;
+    document.getElementById('cpa-automation-sync-local-invalid').checked = config.sync_local_invalid !== false;
+}
+
+function renderCpaAutomationProxyOptions(selectedValue = '', legacyProxy = '') {
+    const select = document.getElementById('cpa-automation-proxy');
+    if (!select) return;
+    cpaAutomationState.selectedProxyId = selectedValue ? String(selectedValue) : '';
+
+    const options = ['<option value="">留空使用系统代理策略</option>'];
+    cpaAutomationState.proxies.forEach(proxy => {
+        const label = `${escapeHtml(proxy.name)} (${proxy.type.toUpperCase()} ${escapeHtml(proxy.host)}:${proxy.port})`;
+        const selected = String(proxy.id) === String(selectedValue) ? 'selected' : '';
+        options.push(`<option value="${proxy.id}" ${selected}>${label}</option>`);
+    });
+
+    if (!selectedValue && legacyProxy) {
+        options.push('<option value="" selected>已保存旧版自定义代理，重新保存后将改为系统策略</option>');
+    }
+
+    select.innerHTML = options.join('');
+}
+
+function renderCpaAutomationStatus(status = {}, config = {}) {
+    document.getElementById('cpa-automation-status-scheduler').textContent = config.enabled
+        ? (status.scheduler_running ? '已启用' : '等待启动')
+        : '未启用';
+    document.getElementById('cpa-automation-status-running').textContent = status.is_running ? '执行中' : '空闲';
+    document.getElementById('cpa-automation-status-last-run').textContent = format.date(status.last_run_started_at);
+    document.getElementById('cpa-automation-status-next-run').textContent = config.enabled
+        ? format.date(status.next_run_at)
+        : '已停用';
+    document.getElementById('cpa-automation-status-trigger').textContent = status.last_trigger || '-';
+    document.getElementById('cpa-automation-status-batch').textContent = status.last_batch_id || '-';
+
+    const summary = document.getElementById('cpa-automation-summary');
+    if (!summary) return;
+
+    const lastSummary = status.last_summary;
+    if (!lastSummary) {
+        summary.classList.add('empty');
+        summary.textContent = '尚未执行联动任务';
+        return;
+    }
+
+    summary.classList.remove('empty');
+
+    const replenishment = lastSummary.replenishment || {};
+    const replenishText = replenishment.launched
+        ? `已启动补号 ${replenishment.count || replenishment.requested || 0} 个`
+        : (replenishment.reason || '本轮未触发补号');
+
+    const errorLines = [];
+    if (status.last_error) {
+        errorLines.push(`最近错误：${status.last_error}`);
+    }
+    if ((lastSummary.probe_errors || []).length > 0) {
+        errorLines.push(`探测异常 ${lastSummary.probe_errors.length} 条`);
+    }
+    if ((lastSummary.delete_errors || []).length > 0) {
+        errorLines.push(`删除失败 ${lastSummary.delete_errors.length} 条`);
+    }
+
+    summary.innerHTML = `
+        <div class="automation-summary-title">最近一次执行结果</div>
+        <div class="automation-summary-text">
+            远端剩余 <strong>${format.number(lastSummary.remaining_codex_count || 0)}</strong> 个 Codex 账号，
+            识别 401 <strong>${format.number(lastSummary.invalid_401_count || 0)}</strong> 个，
+            删除成功 <strong>${format.number(lastSummary.deleted_count || 0)}</strong> 个，
+            本地同步失效 <strong>${format.number(lastSummary.local_invalidated_count || 0)}</strong> 个。
+        </div>
+        <div class="automation-summary-text" style="margin-top:8px;">
+            目标值 <strong>${format.number(lastSummary.target_count || 0)}</strong>，
+            需补号 <strong>${format.number(lastSummary.replenish_needed || 0)}</strong>，
+            ${escapeHtml(replenishText)}
+        </div>
+        <div class="automation-summary-badges">
+            <span class="automation-summary-badge">服务 <strong>${escapeHtml(lastSummary.service_name || '-')}</strong></span>
+            <span class="automation-summary-badge">401 <strong>${format.number(lastSummary.invalid_401_count || 0)}</strong></span>
+            <span class="automation-summary-badge">已删 <strong>${format.number(lastSummary.deleted_count || 0)}</strong></span>
+            <span class="automation-summary-badge">剩余 <strong>${format.number(lastSummary.remaining_codex_count || 0)}</strong></span>
+            <span class="automation-summary-badge">补号 <strong>${format.number(lastSummary.replenish_needed || 0)}</strong></span>
+        </div>
+        ${errorLines.length > 0 ? `<div class="automation-summary-text" style="margin-top:8px;color:var(--danger-color);">${escapeHtml(errorLines.join('；'))}</div>` : ''}
+    `;
+}
+
+async function handleSaveCpaAutomation(e) {
+    e.preventDefault();
+
+    const payload = {
+        enabled: document.getElementById('cpa-automation-enabled').checked,
+        cpa_service_id: parseOptionalInt(document.getElementById('cpa-automation-service-id').value),
+        target_count: parseInt(document.getElementById('cpa-automation-target-count').value || '0', 10),
+        email_service_type: document.getElementById('cpa-automation-email-service-type').value,
+        email_service_id: parseOptionalInt(document.getElementById('cpa-automation-email-service-id').value),
+        proxy_id: parseOptionalInt(document.getElementById('cpa-automation-proxy').value),
+        proxy: null,
+        interval_min: parseInt(document.getElementById('cpa-automation-interval-min').value || '0', 10),
+        interval_max: parseInt(document.getElementById('cpa-automation-interval-max').value || '0', 10),
+        concurrency: parseInt(document.getElementById('cpa-automation-concurrency').value || '1', 10),
+        mode: document.getElementById('cpa-automation-mode').value,
+        sync_local_invalid: document.getElementById('cpa-automation-sync-local-invalid').checked,
+        replenish_enabled: document.getElementById('cpa-automation-replenish-enabled').checked
+    };
+
+    if (payload.enabled && !payload.cpa_service_id) {
+        toast.error('启用 CPA 联动前请先选择一个 CPA 服务');
+        return;
+    }
+    if (payload.interval_max < payload.interval_min) {
+        toast.error('最大补号间隔不能小于最小补号间隔');
+        return;
+    }
+
+    try {
+        await api.post('/settings/cpa-automation', payload);
+        cpaAutomationState.selectedProxyId = payload.proxy_id ? String(payload.proxy_id) : '';
+        cpaAutomationState.legacyProxy = '';
+        toast.success('CPA 联动配置已保存');
+        await loadCpaAutomationSettings();
+    } catch (error) {
+        toast.error('保存失败: ' + error.message);
+    }
+}
+
+async function handleRunCpaAutomation() {
+    if (!elements.cpaAutomationRunBtn) return;
+
+    elements.cpaAutomationRunBtn.disabled = true;
+    elements.cpaAutomationRunBtn.textContent = '执行中...';
+
+    try {
+        const result = await api.post('/settings/cpa-automation/run', {});
+        if (result.success) {
+            toast.success(result.message || 'CPA 联动执行完成');
+        } else {
+            toast.warning(result.message || 'CPA 联动未执行');
+        }
+        await loadCpaAutomationSettings();
+    } catch (error) {
+        toast.error('执行失败: ' + error.message);
+    } finally {
+        elements.cpaAutomationRunBtn.disabled = false;
+        elements.cpaAutomationRunBtn.textContent = '▶ 立即执行一次';
+    }
+}
+
+function parseOptionalInt(value) {
+    if (value === '' || value === null || value === undefined) {
+        return null;
+    }
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
 // 保存 Web UI 设置
 async function handleSaveWebuiSettings(e) {
     e.preventDefault();
@@ -383,6 +694,9 @@ async function loadEmailServices() {
     try {
         const data = await api.get('/email-services');
         renderEmailServices(data.services);
+        if (elements.cpaAutomationForm) {
+            loadCpaAutomationOptions();
+        }
     } catch (error) {
         console.error('加载邮箱服务失败:', error);
         if (elements.emailServicesTable) {
@@ -766,7 +1080,14 @@ function escapeHtml(text) {
 async function loadProxies() {
     try {
         const data = await api.get('/settings/proxies');
+        cpaAutomationState.proxies = data.proxies || [];
         renderProxies(data.proxies);
+        if (elements.cpaAutomationForm) {
+            renderCpaAutomationProxyOptions(
+                document.getElementById('cpa-automation-proxy')?.value || cpaAutomationState.selectedProxyId || '',
+                cpaAutomationState.legacyProxy
+            );
+        }
     } catch (error) {
         console.error('加载代理列表失败:', error);
         elements.proxiesTable.innerHTML = `
@@ -1223,6 +1544,9 @@ async function loadCpaServices() {
     try {
         const services = await api.get('/cpa-services');
         renderCpaServicesTable(services);
+        if (elements.cpaAutomationForm) {
+            loadCpaAutomationOptions();
+        }
     } catch (e) {
         elements.cpaServicesTable.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger-color);">${e.message}</td></tr>`;
     }

@@ -1150,6 +1150,59 @@ body {
 }
 
 /* ============================================
+   CPA 自动化
+   ============================================ */
+
+.automation-summary {
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-md);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-hover);
+}
+
+.automation-summary.empty {
+    color: var(--text-secondary);
+}
+
+.automation-summary-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.automation-summary-text {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.automation-summary-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+.automation-summary-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.automation-summary-badge strong {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+/* ============================================
    导入区域
    ============================================ */
 

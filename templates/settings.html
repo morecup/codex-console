@@ -39,6 +39,7 @@
                 <button class="tab-btn active" data-tab="proxy">🌐 代理设置</button>
                 <button class="tab-btn" data-tab="webui">🔒 访问控制</button>
                 <button class="tab-btn" data-tab="upload">☁️ 上传</button>
+                <button class="tab-btn" data-tab="cpa-automation">🤖 CPA联动</button>
                 <button class="tab-btn" data-tab="outlook">📮 Outlook配置</button>
                 <button class="tab-btn" data-tab="registration">⚙️ 注册配置</button>
                 <button class="tab-btn" data-tab="email-code">📧 验证码配置</button>
@@ -528,6 +529,157 @@
                             <li><strong>验证码去重</strong>：避免重复使用同一验证码</li>
                             <li><strong>多策略提取</strong>：主题优先 → 语义匹配 → 兜底匹配</li>
                             <li><strong>发件人验证</strong>：严格验证邮件来自 OpenAI 官方</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CPA 联动 -->
+            <div class="tab-content" id="cpa-automation-tab">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>CPA 401 自动剔除与补号</h3>
+                        <span class="hint">按小时巡检 CPA 远端账号池，删除 401 并自动补到目标值</span>
+                    </div>
+                    <div class="card-body">
+                        <form id="cpa-automation-form">
+                            <div class="form-group">
+                                <label style="display:flex;align-items:center;gap:8px;">
+                                    <input type="checkbox" id="cpa-automation-enabled" name="enabled">
+                                    启用每小时自动巡检
+                                </label>
+                                <span class="hint">启用后，系统会在后台按 1 小时间隔执行一次联动流程</span>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="cpa-automation-service-id">联动 CPA 服务</label>
+                                    <select id="cpa-automation-service-id" name="cpa_service_id"></select>
+                                    <span class="hint">系统会维护这个 CPA 服务里的 Codex 账号池</span>
+                                </div>
+                                <div class="form-group">
+                                    <label for="cpa-automation-target-count">目标账号数</label>
+                                    <input type="number" id="cpa-automation-target-count" name="target_count" value="0" min="0">
+                                    <span class="hint">剔除 401 后，自动补到这个远端数量；填 0 表示只清理不补号</span>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="cpa-automation-email-service-type">补号邮箱类型</label>
+                                    <select id="cpa-automation-email-service-type" name="email_service_type"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="cpa-automation-email-service-id">指定邮箱服务（可选）</label>
+                                    <select id="cpa-automation-email-service-id" name="email_service_id"></select>
+                                    <span class="hint" id="cpa-automation-email-service-hint">留空时按现有注册逻辑自动选择可用服务</span>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="cpa-automation-concurrency">补号并发</label>
+                                    <input type="number" id="cpa-automation-concurrency" name="concurrency" value="1" min="1" max="50">
+                                </div>
+                                <div class="form-group">
+                                    <label for="cpa-automation-mode">补号模式</label>
+                                    <select id="cpa-automation-mode" name="mode">
+                                        <option value="pipeline">流水线</option>
+                                        <option value="parallel">并行</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="cpa-automation-proxy">注册代理（可选）</label>
+                                    <select id="cpa-automation-proxy" name="proxy"></select>
+                                    <span class="hint">留空使用系统代理策略；如需强制走固定代理，可直接在这里选择</span>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="cpa-automation-interval-min">最小补号间隔 (秒)</label>
+                                    <input type="number" id="cpa-automation-interval-min" name="interval_min" value="5" min="0" max="600">
+                                </div>
+                                <div class="form-group">
+                                    <label for="cpa-automation-interval-max">最大补号间隔 (秒)</label>
+                                    <input type="number" id="cpa-automation-interval-max" name="interval_max" value="30" min="0" max="1800">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label style="display:flex;align-items:center;gap:8px;">
+                                        <input type="checkbox" id="cpa-automation-replenish-enabled" name="replenish_enabled" checked>
+                                        自动补充账号到目标值
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label style="display:flex;align-items:center;gap:8px;">
+                                        <input type="checkbox" id="cpa-automation-sync-local-invalid" name="sync_local_invalid" checked>
+                                        同步标记本地 401 账号为失效
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">💾 保存联动配置</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card-header">
+                        <h3>运行状态</h3>
+                        <div style="display:flex;gap:var(--spacing-sm);">
+                            <button type="button" class="btn btn-secondary btn-sm" id="cpa-automation-refresh-btn">🔄 刷新状态</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="cpa-automation-run-btn">▶ 立即执行一次</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="label">调度状态</span>
+                                <span class="value" id="cpa-automation-status-scheduler">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">当前执行</span>
+                                <span class="value" id="cpa-automation-status-running">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">上次执行</span>
+                                <span class="value" id="cpa-automation-status-last-run">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">下次执行</span>
+                                <span class="value" id="cpa-automation-status-next-run">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">上次触发方式</span>
+                                <span class="value" id="cpa-automation-status-trigger">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">最近补号批次</span>
+                                <span class="value" id="cpa-automation-status-batch">-</span>
+                            </div>
+                        </div>
+
+                        <div class="automation-summary empty" id="cpa-automation-summary">
+                            尚未执行联动任务
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card-header">
+                        <h3>联动说明</h3>
+                    </div>
+                    <div class="card-body">
+                        <ul class="info-list">
+                            <li><strong>401 探测</strong>：按 CPA `auth-files` 列表逐个探测 `wham/usage`，识别已失效账号。</li>
+                            <li><strong>远端剔除</strong>：命中 401 的账号会从对应 CPA 服务中删除。</li>
+                            <li><strong>本地同步</strong>：可选把本地对应账号标记为 `expired` 并取消 `CPA 已上传` 标记。</li>
+                            <li><strong>自动补号</strong>：系统按远端剩余账号数与目标值的差额，复用现有批量注册能力自动补齐。</li>
                         </ul>
                     </div>
                 </div>
