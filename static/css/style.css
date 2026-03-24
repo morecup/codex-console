@@ -1202,6 +1202,27 @@ body {
     font-weight: 700;
 }
 
+.automation-batch-monitor {
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-md);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-hover) 100%);
+}
+
+.automation-batch-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.automation-log {
+    margin-top: var(--spacing-md);
+    height: 240px;
+}
+
 /* ============================================
    导入区域
    ============================================ */

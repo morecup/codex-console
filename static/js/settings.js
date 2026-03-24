@@ -76,7 +76,18 @@ const elements = {
     cpaAutomationForm: document.getElementById('cpa-automation-form'),
     cpaAutomationRunBtn: document.getElementById('cpa-automation-run-btn'),
     cpaAutomationRefreshBtn: document.getElementById('cpa-automation-refresh-btn'),
-    cpaAutomationEmailServiceType: document.getElementById('cpa-automation-email-service-type')
+    cpaAutomationEmailServiceType: document.getElementById('cpa-automation-email-service-type'),
+    cpaAutomationBatchMonitor: document.getElementById('cpa-automation-batch-monitor'),
+    cpaAutomationBatchState: document.getElementById('cpa-automation-batch-state'),
+    cpaAutomationBatchId: document.getElementById('cpa-automation-batch-id'),
+    cpaAutomationBatchNote: document.getElementById('cpa-automation-batch-note'),
+    cpaAutomationBatchProgress: document.getElementById('cpa-automation-batch-progress'),
+    cpaAutomationBatchSuccess: document.getElementById('cpa-automation-batch-success'),
+    cpaAutomationBatchFailed: document.getElementById('cpa-automation-batch-failed'),
+    cpaAutomationBatchRemaining: document.getElementById('cpa-automation-batch-remaining'),
+    cpaAutomationBatchProgressBar: document.getElementById('cpa-automation-batch-progress-bar'),
+    cpaAutomationBatchProgressText: document.getElementById('cpa-automation-batch-progress-text'),
+    cpaAutomationBatchLogs: document.getElementById('cpa-automation-batch-logs')
 };
 
 // 选中的服务 ID
@@ -87,7 +98,11 @@ const cpaAutomationState = {
     serviceTypes: [],
     proxies: [],
     selectedProxyId: '',
-    legacyProxy: ''
+    legacyProxy: '',
+    batchPollingTimer: null,
+    batchPollingId: '',
+    batchDisplayId: '',
+    batchLastLogIndex: 0
 };
 
 // 初始化
@@ -424,6 +439,7 @@ async function loadCpaAutomationSettings() {
         const data = await api.get('/settings/cpa-automation');
         applyCpaAutomationConfig(data.config || {});
         renderCpaAutomationStatus(data.status || {}, data.config || {});
+        await syncCpaAutomationBatchMonitor(data.status || {});
     } catch (error) {
         console.error('加载 CPA 联动配置失败:', error);
         toast.error('加载 CPA 联动配置失败');
@@ -535,6 +551,7 @@ function renderCpaAutomationProxyOptions(selectedValue = '', legacyProxy = '') {
 }
 
 function renderCpaAutomationStatus(status = {}, config = {}) {
+    const monitorBatchId = getCpaAutomationMonitorBatchId(status);
     document.getElementById('cpa-automation-status-scheduler').textContent = config.enabled
         ? (status.scheduler_running ? '已启用' : '等待启动')
         : '未启用';
@@ -544,7 +561,7 @@ function renderCpaAutomationStatus(status = {}, config = {}) {
         ? format.date(status.next_run_at)
         : '已停用';
     document.getElementById('cpa-automation-status-trigger').textContent = status.last_trigger || '-';
-    document.getElementById('cpa-automation-status-batch').textContent = status.last_batch_id || '-';
+    document.getElementById('cpa-automation-status-batch').textContent = monitorBatchId || status.last_batch_id || '-';
 
     const summary = document.getElementById('cpa-automation-summary');
     if (!summary) return;
@@ -596,6 +613,210 @@ function renderCpaAutomationStatus(status = {}, config = {}) {
         </div>
         ${errorLines.length > 0 ? `<div class="automation-summary-text" style="margin-top:8px;color:var(--danger-color);">${escapeHtml(errorLines.join('；'))}</div>` : ''}
     `;
+}
+
+function getCpaAutomationMonitorBatchId(status = {}) {
+    const replenishment = status.last_summary?.replenishment || null;
+    if (replenishment) {
+        return replenishment.batch_id || '';
+    }
+    return status.last_batch_id || '';
+}
+
+function getCpaAutomationBatchStatusMeta(status) {
+    const mapping = {
+        running: { text: '执行中', className: 'running' },
+        completed: { text: '已完成', className: 'completed' },
+        failed: { text: '失败', className: 'failed' },
+        cancelled: { text: '已取消', className: 'disabled' },
+        cancelling: { text: '取消中', className: 'warning' },
+        pending: { text: '等待中', className: 'pending' }
+    };
+
+    return mapping[status] || { text: status || '未启动', className: 'pending' };
+}
+
+function inferCpaAutomationLogType(log) {
+    if (typeof log !== 'string') return 'info';
+
+    const lowerLog = log.toLowerCase();
+    if (lowerLog.includes('error') || lowerLog.includes('失败') || lowerLog.includes('错误')) {
+        return 'error';
+    }
+    if (lowerLog.includes('warning') || lowerLog.includes('警告') || lowerLog.includes('取消')) {
+        return 'warning';
+    }
+    if (lowerLog.includes('success') || lowerLog.includes('成功') || lowerLog.includes('完成')) {
+        return 'success';
+    }
+    return 'info';
+}
+
+function stopCpaAutomationBatchPolling({ clearDisplay = false } = {}) {
+    if (cpaAutomationState.batchPollingTimer) {
+        clearInterval(cpaAutomationState.batchPollingTimer);
+        cpaAutomationState.batchPollingTimer = null;
+    }
+    cpaAutomationState.batchPollingId = '';
+
+    if (clearDisplay) {
+        cpaAutomationState.batchDisplayId = '';
+        cpaAutomationState.batchLastLogIndex = 0;
+    }
+}
+
+function resetCpaAutomationBatchLogView(batchId) {
+    if (!elements.cpaAutomationBatchLogs) return;
+
+    if (cpaAutomationState.batchDisplayId !== batchId) {
+        cpaAutomationState.batchDisplayId = batchId;
+        cpaAutomationState.batchLastLogIndex = 0;
+        elements.cpaAutomationBatchLogs.innerHTML = '';
+    }
+}
+
+function renderCpaAutomationBatchLogs(batchId, logs = []) {
+    if (!elements.cpaAutomationBatchLogs) return;
+
+    resetCpaAutomationBatchLogView(batchId);
+
+    const newLogs = logs.slice(cpaAutomationState.batchLastLogIndex);
+    if (newLogs.length === 0) {
+        if (!elements.cpaAutomationBatchLogs.innerHTML.trim()) {
+            elements.cpaAutomationBatchLogs.innerHTML = '<div class="log-line info">该补号批次暂时还没有输出日志</div>';
+        }
+        return;
+    }
+
+    newLogs.forEach(message => {
+        const line = document.createElement('div');
+        line.className = `log-line ${inferCpaAutomationLogType(message)}`;
+        line.textContent = message;
+        elements.cpaAutomationBatchLogs.appendChild(line);
+    });
+
+    cpaAutomationState.batchLastLogIndex = logs.length;
+    elements.cpaAutomationBatchLogs.scrollTop = elements.cpaAutomationBatchLogs.scrollHeight;
+}
+
+function renderEmptyCpaAutomationBatchMonitor(status = {}) {
+    if (!elements.cpaAutomationBatchMonitor) return;
+
+    stopCpaAutomationBatchPolling({ clearDisplay: true });
+
+    const replenishment = status.last_summary?.replenishment || {};
+    const note = replenishment.reason || (status.last_summary ? '最近一次联动未触发补号任务' : '最近一次联动尚未触发补号任务');
+
+    elements.cpaAutomationBatchState.textContent = '未启动';
+    elements.cpaAutomationBatchState.className = 'status-badge pending';
+    elements.cpaAutomationBatchId.textContent = '-';
+    elements.cpaAutomationBatchNote.textContent = note;
+    elements.cpaAutomationBatchProgress.textContent = '-';
+    elements.cpaAutomationBatchSuccess.textContent = '0';
+    elements.cpaAutomationBatchFailed.textContent = '0';
+    elements.cpaAutomationBatchRemaining.textContent = '0';
+    elements.cpaAutomationBatchProgressBar.style.width = '0%';
+    elements.cpaAutomationBatchProgressBar.classList.remove('indeterminate');
+    elements.cpaAutomationBatchProgressText.textContent = '0/0 (0%)';
+    elements.cpaAutomationBatchLogs.innerHTML = '<div class="log-line info">最近一次补号日志会显示在这里</div>';
+}
+
+function renderCpaAutomationBatchMonitor(batch, status = {}) {
+    if (!elements.cpaAutomationBatchMonitor || !batch) return;
+
+    const batchId = batch.batch_id || '';
+    const total = Number(batch.total || 0);
+    const completed = Number(batch.completed || 0);
+    const success = Number(batch.success || 0);
+    const failed = Number(batch.failed || 0);
+    const remaining = Math.max(total - completed, 0);
+    const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const statusMeta = getCpaAutomationBatchStatusMeta(batch.status);
+    const replenishment = status.last_summary?.replenishment || {};
+
+    let note = replenishment.reason || '正在跟踪最近一次补号批次';
+    if (batch.status === 'running') {
+        note = `已发起补号 ${format.number(replenishment.count || replenishment.requested || total)} 个，正在跟踪执行结果`;
+    } else if (batch.status === 'completed') {
+        note = failed > 0
+            ? `本轮补号已结束，成功 ${success} 个、失败 ${failed} 个`
+            : `本轮补号已顺利完成，共成功补入 ${success} 个账号`;
+    } else if (batch.status === 'failed') {
+        note = '补号批次执行失败，请查看下方日志定位原因';
+    } else if (batch.status === 'cancelled' || batch.status === 'cancelling') {
+        note = '补号批次已被取消，未完成的缺口会等下一轮巡检重新计算';
+    }
+
+    elements.cpaAutomationBatchState.textContent = statusMeta.text;
+    elements.cpaAutomationBatchState.className = `status-badge ${statusMeta.className}`;
+    elements.cpaAutomationBatchId.textContent = batchId || '-';
+    elements.cpaAutomationBatchNote.textContent = note;
+    elements.cpaAutomationBatchProgress.textContent = total > 0 ? `${completed}/${total}` : '-';
+    elements.cpaAutomationBatchSuccess.textContent = format.number(success);
+    elements.cpaAutomationBatchFailed.textContent = format.number(failed);
+    elements.cpaAutomationBatchRemaining.textContent = format.number(remaining);
+    elements.cpaAutomationBatchProgressBar.style.width = `${progress}%`;
+    elements.cpaAutomationBatchProgressBar.classList.remove('indeterminate');
+    elements.cpaAutomationBatchProgressText.textContent = `${completed}/${total} (${progress}%)`;
+
+    renderCpaAutomationBatchLogs(batchId, batch.logs || []);
+
+    if (!batch.finished && !['completed', 'failed', 'cancelled'].includes(batch.status)) {
+        startCpaAutomationBatchPolling(batchId);
+    } else {
+        stopCpaAutomationBatchPolling();
+    }
+}
+
+async function fetchAndRenderCpaAutomationBatch(batchId, status = {}) {
+    if (!batchId) {
+        renderEmptyCpaAutomationBatchMonitor(status);
+        return null;
+    }
+
+    try {
+        const batch = await api.get(`/registration/batch/${batchId}`);
+        renderCpaAutomationBatchMonitor(batch, status);
+        return batch;
+    } catch (error) {
+        console.error('加载 CPA 补号批次状态失败:', error);
+        stopCpaAutomationBatchPolling({ clearDisplay: true });
+        elements.cpaAutomationBatchState.textContent = '未知';
+        elements.cpaAutomationBatchState.className = 'status-badge warning';
+        elements.cpaAutomationBatchId.textContent = batchId;
+        elements.cpaAutomationBatchNote.textContent = '补号批次状态已不可用，可能已被清理或服务刚重启';
+        elements.cpaAutomationBatchProgress.textContent = '-';
+        elements.cpaAutomationBatchProgressBar.style.width = '0%';
+        elements.cpaAutomationBatchProgressBar.classList.remove('indeterminate');
+        elements.cpaAutomationBatchProgressText.textContent = '0/0 (0%)';
+        elements.cpaAutomationBatchLogs.innerHTML = `<div class="log-line warning">${escapeHtml(error.message || '无法读取补号批次状态')}</div>`;
+        return null;
+    }
+}
+
+function startCpaAutomationBatchPolling(batchId) {
+    if (!batchId) return;
+    if (cpaAutomationState.batchPollingTimer && cpaAutomationState.batchPollingId === batchId) {
+        return;
+    }
+
+    stopCpaAutomationBatchPolling();
+    cpaAutomationState.batchPollingId = batchId;
+    cpaAutomationState.batchPollingTimer = window.setInterval(() => {
+        fetchAndRenderCpaAutomationBatch(batchId).catch(error => {
+            console.error('轮询 CPA 补号批次状态失败:', error);
+        });
+    }, 2000);
+}
+
+async function syncCpaAutomationBatchMonitor(status = {}) {
+    const batchId = getCpaAutomationMonitorBatchId(status);
+    if (!batchId) {
+        renderEmptyCpaAutomationBatchMonitor(status);
+        return;
+    }
+
+    await fetchAndRenderCpaAutomationBatch(batchId, status);
 }
 
 async function handleSaveCpaAutomation(e) {

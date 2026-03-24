@@ -667,6 +667,33 @@
                         <div class="automation-summary empty" id="cpa-automation-summary">
                             尚未执行联动任务
                         </div>
+
+                        <div class="automation-batch-monitor" id="cpa-automation-batch-monitor">
+                            <div class="automation-batch-header">
+                                <div>
+                                    <div class="automation-summary-title" style="margin-bottom: 4px;">补号批次监控</div>
+                                    <div class="automation-summary-text" id="cpa-automation-batch-note">最近一次联动尚未触发补号任务</div>
+                                </div>
+                                <span class="status-badge pending" id="cpa-automation-batch-state">未启动</span>
+                            </div>
+
+                            <div class="automation-summary-badges" style="margin-top: var(--spacing-md);">
+                                <span class="automation-summary-badge">批次 <strong id="cpa-automation-batch-id">-</strong></span>
+                                <span class="automation-summary-badge">进度 <strong id="cpa-automation-batch-progress">-</strong></span>
+                                <span class="automation-summary-badge">成功 <strong id="cpa-automation-batch-success">0</strong></span>
+                                <span class="automation-summary-badge">失败 <strong id="cpa-automation-batch-failed">0</strong></span>
+                                <span class="automation-summary-badge">剩余 <strong id="cpa-automation-batch-remaining">0</strong></span>
+                            </div>
+
+                            <div class="progress-bar-container" style="margin-top: var(--spacing-md); margin-bottom: var(--spacing-sm);">
+                                <div class="progress-bar" id="cpa-automation-batch-progress-bar" style="width: 0%;"></div>
+                            </div>
+                            <div class="automation-summary-text" id="cpa-automation-batch-progress-text">0/0 (0%)</div>
+
+                            <div class="console-log automation-log" id="cpa-automation-batch-logs">
+                                <div class="log-line info">最近一次补号日志会显示在这里</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

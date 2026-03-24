@@ -582,10 +582,12 @@ def _init_batch_state(batch_id: str, task_uuids: List[str]):
     """初始化批量任务内存状态"""
     task_manager.init_batch(batch_id, len(task_uuids))
     batch_tasks[batch_id] = {
+        "status": "running",
         "total": len(task_uuids),
         "completed": 0,
         "success": 0,
         "failed": 0,
+        "skipped": 0,
         "cancelled": False,
         "task_uuids": task_uuids,
         "current_index": 0,
@@ -984,13 +986,16 @@ async def get_batch_status(batch_id: str):
     batch = batch_tasks[batch_id]
     return {
         "batch_id": batch_id,
+        "status": batch.get("status", "running"),
         "total": batch["total"],
         "completed": batch["completed"],
         "success": batch["success"],
         "failed": batch["failed"],
+        "skipped": batch.get("skipped", 0),
         "current_index": batch["current_index"],
         "cancelled": batch["cancelled"],
         "finished": batch.get("finished", False),
+        "logs": batch.get("logs", []),
         "progress": f"{batch['completed']}/{batch['total']}"
     }
 
@@ -1488,6 +1493,7 @@ async def start_outlook_batch_registration(
 
     # 初始化批量任务状态
     batch_tasks[batch_id] = {
+        "status": "running",
         "total": len(actual_service_ids),
         "completed": 0,
         "success": 0,
