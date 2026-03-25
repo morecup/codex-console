@@ -99,6 +99,7 @@ const cpaAutomationState = {
     proxies: [],
     selectedProxyId: '',
     legacyProxy: '',
+    optionsLoadSeq: 0,
     batchPollingTimer: null,
     batchPollingId: '',
     batchDisplayId: '',
@@ -407,26 +408,36 @@ async function loadCpaAutomationSection() {
 async function loadCpaAutomationOptions() {
     if (!elements.cpaAutomationForm) return;
 
+    const requestSeq = ++cpaAutomationState.optionsLoadSeq;
+
     try {
-        const currentServiceId = document.getElementById('cpa-automation-service-id')?.value || '';
-        const currentType = document.getElementById('cpa-automation-email-service-type')?.value || 'tempmail';
-        const currentEmailServiceId = document.getElementById('cpa-automation-email-service-id')?.value || '';
-        const currentProxyId = document.getElementById('cpa-automation-proxy')?.value || cpaAutomationState.selectedProxyId || '';
         const [cpaServices, emailServices, serviceTypes] = await Promise.all([
             api.get('/cpa-services'),
             api.get('/email-services?enabled_only=true'),
             api.get('/email-services/types')
         ]);
 
+        if (requestSeq !== cpaAutomationState.optionsLoadSeq) {
+            return;
+        }
+
         cpaAutomationState.cpaServices = Array.isArray(cpaServices) ? cpaServices : [];
         cpaAutomationState.emailServices = emailServices?.services || [];
         cpaAutomationState.serviceTypes = serviceTypes?.types || [];
+
+        const currentServiceId = document.getElementById('cpa-automation-service-id')?.value || '';
+        const currentType = document.getElementById('cpa-automation-email-service-type')?.value || 'tempmail';
+        const currentEmailServiceId = document.getElementById('cpa-automation-email-service-id')?.value || '';
+        const currentProxyId = document.getElementById('cpa-automation-proxy')?.value || cpaAutomationState.selectedProxyId || '';
 
         renderCpaAutomationServiceOptions(currentServiceId);
         renderCpaAutomationTypeOptions(currentType);
         updateCpaAutomationEmailServiceOptions(currentEmailServiceId);
         renderCpaAutomationProxyOptions(currentProxyId, cpaAutomationState.legacyProxy);
     } catch (error) {
+        if (requestSeq !== cpaAutomationState.optionsLoadSeq) {
+            return;
+        }
         console.error('加载 CPA 联动选项失败:', error);
         toast.error('加载 CPA 联动选项失败');
     }
