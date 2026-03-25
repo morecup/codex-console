@@ -101,7 +101,9 @@ def _utcnow() -> datetime:
 
 
 def _dt_to_iso(value: Optional[datetime]) -> Optional[str]:
-    return value.isoformat() if value else None
+    if not value:
+        return None
+    return value.isoformat() + "Z" if not value.tzinfo else value.isoformat()
 
 
 def _safe_json(text: str) -> Dict[str, Any]:
