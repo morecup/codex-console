@@ -702,11 +702,23 @@ function renderCpaAutomationBatchLogs(batchId, logs = []) {
     newLogs.forEach(message => {
         const line = document.createElement('div');
         line.className = `log-line ${inferCpaAutomationLogType(message)}`;
-        line.textContent = message;
+        const timestamp = new Date().toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        line.innerHTML = `<span class="timestamp">[${timestamp}]</span>${escapeHtml(message)}`;
         elements.cpaAutomationBatchLogs.appendChild(line);
     });
 
     cpaAutomationState.batchLastLogIndex = logs.length;
+
+    // 限制日志行数
+    const lines = elements.cpaAutomationBatchLogs.querySelectorAll('.log-line');
+    while (lines.length > 500) {
+        lines[0].remove();
+    }
+
     elements.cpaAutomationBatchLogs.scrollTop = elements.cpaAutomationBatchLogs.scrollHeight;
 }
 
